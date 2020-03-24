@@ -6,6 +6,7 @@ function openIGTMessageSender = OpenIGTLinkMessageSender(igtlConnection)
     openIGTMessageSender.igtlSend1DFloatArrayMessage = @igtlSend1DFloatArrayMessage;
     openIGTMessageSender.igtlSendTransformMessage = @igtlSendTransformMessage;
     openIGTMessageSender.igtlSendImageMessage = @igtlSendImageMessage;
+    openIGTMessageSender.igtlSendPointMessage = @igtlSendPointMessage;
 end
 
 function result=igtlSendStringMessage(deviceName, msgString)
@@ -27,6 +28,47 @@ function result=igtlSend1DFloatArrayMessage(deviceName, data)
         msg.body=[ msg.body, convertFromFloat32ToUint8Vector(data(i))];
     end
     result=WriteOpenIGTLinkMessage(msg);
+end
+
+function result=igtlSendPointMessage(deviceName, data)
+    msg.dataTypeName='POINT';
+    msg.deviceName=deviceName;
+    msg.timestamp=igtlTimestampNow();
+    
+    if size(data,2)~=3
+        disp('DATA MUST HAVE SIZE Nx3');
+        result = -1;
+        return;
+    end
+
+    %sizeOfPoint = 136;
+    numPoints = size(data, 1);
+    
+    msg.body = [];
+    
+    group = 'Fiducal';
+    color = [1,1,0,0];
+    diamter = 1;
+    owner = '';
+    for i=1:numPoints
+        name = ['F_' , num2str(i)];
+        x = data(i,1);
+        y = data(i,2);
+        z = data(i,3);
+        point_data = [];
+        
+        point_data=[point_data, padString(name,64)];
+        point_data=[point_data, padString(group,32)];
+        
+        point_data=[point_data, uint8(color)];
+        point_data=[point_data, convertFromFloat32ToUint8Vector(x)];
+        point_data=[point_data, convertFromFloat32ToUint8Vector(y)];
+        point_data=[point_data, convertFromFloat32ToUint8Vector(z)];
+        point_data=[point_data, convertFromFloat32ToUint8Vector(diamter)];
+        point_data=[point_data, padString(owner,20)];
+        msg.body= [msg.body, point_data];
+    end
+    result=WriteOpenIGTLinkMessage(msg);  
 end
 
 function result=igtlSendTransformMessage(deviceName, transform)
@@ -102,6 +144,8 @@ function result=WriteOpenIGTLinkMessage(msg)
     result=1;
     try
         %disp(['Length Of Data being writeen to socket=', num2str(length(data))]);
+        %write data considering the output buffersize
+        
         fwrite(socket, uint8(data));
     catch ME
         disp(ME.message)

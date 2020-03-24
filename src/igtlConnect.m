@@ -23,7 +23,7 @@ if (nargin>1)
 end
 
 try
-    socket = tcpip(hostname, port, 'NetworkRole', 'client', 'Terminator', 'CR', 'Timeout', 12);
+    socket = tcpip(hostname, port, 'NetworkRole', 'client', 'Terminator', 'CR', 'Timeout', 12, 'OutputBufferSize', 65000);
     fopen(socket);
 
     igtlConnection.socket = socket ; 
