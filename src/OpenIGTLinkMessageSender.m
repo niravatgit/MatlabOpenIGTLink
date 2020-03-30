@@ -7,6 +7,7 @@ function openIGTMessageSender = OpenIGTLinkMessageSender(igtlConnection)
     openIGTMessageSender.igtlSendTransformMessage = @igtlSendTransformMessage;
     openIGTMessageSender.igtlSendImageMessage = @igtlSendImageMessage;
     openIGTMessageSender.igtlSendPointMessage = @igtlSendPointMessage;
+    openIGTMessageSender.igtlSendTDATAMessage = @igtlSendTDATAMessage;
 end
 
 function result=igtlSendStringMessage(deviceName, msgString)
@@ -88,6 +89,31 @@ function result=igtlSendTransformMessage(deviceName, transform)
     result=WriteOpenIGTLinkMessage(msg);
 end
 
+function result=igtlSendTDATAMessage(deviceName, tData)
+    msg.dataTypeName='TDATA';
+    msg.deviceName=deviceName;
+    msg.timestamp=igtlTimestampNow();
+    
+    if size(tData,1)~=4 && size(tData,2)~=4
+        disp('DATA MUST HAVE SIZE 4x4xN');
+        result = -1;
+        return;
+    end
+
+    % version number
+    % note that it is an unsigned short value, but small positive signed and unsigned numbers are represented the same way, so we can use writeShort
+    msg.body = [];
+    for i=1:size(tData, 3)
+        t_data = [];
+        t_data = [t_data, padString([deviceName , num2str(i)],20)];
+        t_data = [t_data, uint8(2)];
+        t_data = [t_data, uint8(0)];
+        t_data = [t_data, typecast(swapbytes(single(reshape(tData(1:3,:,i),1,[]))), 'uint8')];
+        msg.body = [msg.body, t_data];
+    end
+    result=WriteOpenIGTLinkMessage(msg);
+end
+
 function result=igtlSendImageMessage(deviceName, RI, RJ, RK , TX, TY, TZ, SX, SY, SZ, NX, NY, NZ, PX, PY, PZ, imageData)
 tic
     msg.dataTypeName='IMAGE';
@@ -143,7 +169,7 @@ function result=WriteOpenIGTLinkMessage(msg)
     data=[data, uint8(msg.body)];    
     result=1;
     try
-        %disp(['Length Of Data being writeen to socket=', num2str(length(data))]);
+        disp(['Length Of Data being writeen to socket=', num2str(length(data))]);
         %write data considering the output buffersize
         
         fwrite(socket, uint8(data));

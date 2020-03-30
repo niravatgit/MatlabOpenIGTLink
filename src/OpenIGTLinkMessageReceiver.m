@@ -30,6 +30,8 @@ function [status, messageType, name, data] = readMessage()
         [name, data]= handleNDArrayMessage(msg);
      elseif strcmpi(messageType, 'POINT') == 1
          [name, data] = handlePointMessage(msg);
+         disp(name);
+         disp(data);
     end        
     if ~isempty(name)
         status = true;
@@ -164,7 +166,7 @@ function [status, msg]=ReadOpenIGTLinkMessage()
         return;
         %error('ERROR: Timeout while waiting receiving OpenIGTLink message header')
     end
-end    
+end
 function data = ReadWithTimeout(requestedDataLength, timeoutSec) %currently does not use timeout will add that later
     global socket;
     requestedDataLength = double(uint32(requestedDataLength));
