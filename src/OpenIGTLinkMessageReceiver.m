@@ -30,8 +30,8 @@ function [status, messageType, name, data] = readMessage()
         [name, data]= handleNDArrayMessage(msg);
      elseif strcmpi(messageType, 'POINT') == 1
          [name, data] = handlePointMessage(msg);
-         disp(name);
-         disp(data);
+         %disp(name);
+         %disp(data);
     end        
     if ~isempty(name)
         status = true;
@@ -59,7 +59,8 @@ function [name, trans] = handleTransformMessage(msg)
     k=1;
     for i=1:4
         for j=1:3
-            transform(j,i) = convertFromUint8VectorToFloat32(msg.body(4*(k-1) +1:4*k));
+            transform(j,i) = swapbytes(typecast(uint8(msg.body(4*(k-1) +1:4*k)), 'single'));
+%                 convertFromUint8VectorToFloat32(msg.body(4*(k-1) +1:4*k));
             k = k+1;
         end
     end
@@ -146,8 +147,18 @@ function parsedMsg=ParseOpenIGTLinkMessageHeader(rawMsg)
     parsedMsg.dataTypeName=char(rawMsg(3:14));
     parsedMsg.deviceName=char(rawMsg(15:34));
     parsedMsg.timestamp=convertFromUint8VectorToInt64(rawMsg(35:42));
-    parsedMsg.bodySize=convertFromUint8VectorToInt64(rawMsg(43:50));
+    parsedMsg.bodySize=uint32(convertFromUint8VectorToInt64(rawMsg(43:50)));
     parsedMsg.bodyCrc=convertFromUint8VectorToInt64(rawMsg(51:58));
+end
+
+function extendedHeader=ParseOpenIGTLinkMessageExtendedHeader(body)
+    extendedHeader.ext_header_size = uint32(swapbytes(typecast(uint8(body(1:2)), 'uint16')));
+    extendedHeader.metadata_headr_size = uint32(swapbytes(typecast(uint8(body(3:4)), 'uint16')));
+    extendedHeader.metadata_size = swapbytes(typecast(uint8(body(5:8)), 'uint32'));
+    extendedHeader.reserved = swapbytes(typecast(uint8(body(9:12)), 'uint32'));
+
+%     extendedHeader.msd_id=convertFromUint8VectorToInt64(body(7:10));
+%     extendedHeader.reserved=convertFromUint8VectorToInt64(body(11:14));
 end
 
 function [status, msg]=ReadOpenIGTLinkMessage()
@@ -161,6 +172,13 @@ function [status, msg]=ReadOpenIGTLinkMessage()
         msg.body=ReadWithTimeout(msg.bodySize, timeout);
         if (length(msg.body)==msg.bodySize) %if we did not get correct size of body return empty message
             status = true;
+            if msg.versionNumber == 2 %this means its protocol verison 3
+                extendedHeader = ParseOpenIGTLinkMessageExtendedHeader(msg.body);
+                content_size = msg.bodySize - ( extendedHeader.ext_header_size + extendedHeader.metadata_headr_size + extendedHeader.metadata_size );
+                content_start = extendedHeader.ext_header_size+1;
+                content_end = content_start + content_size;
+                msg.body = msg.body(content_start: content_end);
+            end
         end    
     else
         return;
@@ -193,14 +211,17 @@ end
 function result=convertFromUint8VectorToUint16(uint8Vector)
   result=int32(uint8Vector(1))*256+int32(uint8Vector(2));
 end
-
+function result=convertFromUint8VectorToUint32(uint8Vector)
+  result=int32(uint8Vector(1))*256+int32(uint8Vector(2));
+end
 function result=convertFromUint8VectorToFloat32(uint8Vector)
-    binVal = '';
-    for i=1:4
-        binVal = strcat(binVal, dec2bin(uint8Vector(i),8));
-    end
-    q = quantizer('float', [32 8]); % this is IEE 754
-    result = bin2num(q, binVal);
+  result = swapbytes(typecast(uint8(uint8Vector), 'single'));
+%   binVal = '';
+%     for i=1:4
+%         binVal = strcat(binVal, dec2bin(uint8Vector(i),8));
+%     end
+%     q = quantizer('float', [32 8]); % this is IEE 754
+%     result = bin2num(q, binVal);
 end 
 
 function result=convertFromUint8VectorToInt64(uint8Vector)
