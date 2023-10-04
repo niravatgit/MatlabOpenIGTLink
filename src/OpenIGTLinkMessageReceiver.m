@@ -1,42 +1,44 @@
 % OpenIGTLink server that executes the received string commands
-function receiver = OpenIGTLinkMessageReceiver(sock, onRxStringMsg, onRxTransformMsg, onRxNDArrayMsg)
-    global onRxStringMessage onRxTransformMessage onRxNDArrayMessage;
-    onRxStringMessage = onRxStringMsg;
-    onRxTransformMessage = onRxTransformMsg;
-    onRxNDArrayMessage = onRxNDArrayMsg;
-    
+function receiver = OpenIGTLinkMessageReceiver(igtlConnection)
     global socket;
-    socket = sock;
-    
+    socket = igtlConnection.socket;    
     global timeout;
-    timeout = 500;
+    timeout = 0.01;
    
     receiver.readMessage = @readMessage;
 end
 
-function [name, data] = readMessage()
-    global onRxStringMessage onRxTransformMessage onRxNDArrayMessage onRxPointMessage;
-
-    msg = ReadOpenIGTLinkMessage();
-    
+function [status, messageType, name, data] = readMessage()
+    messageType = [];
+    name = [];
+    data = [];
+    [status, msg] = ReadOpenIGTLinkMessage();
+    if ~status
+        return
+    end
+    status = false;
     %look at the message type and call appropriate function supplied as
     %arguments
     messageType = char(msg.dataTypeName);
     messageType = deblank(messageType);
     
     if strcmpi(messageType, 'STRING')==1
-        [name, data] = handleStringMessage(msg, onRxStringMessage );
+        [name, data] = handleStringMessage(msg);
      elseif (strcmpi(messageType, 'TRANSFORM')==1)
-        [name, data]=handleTransformMessage(msg, onRxTransformMessage );
+        [name, data]=handleTransformMessage(msg);
      elseif strcmpi(messageType, 'NDARRAY') == 1
-        [name, data]= handleNDArrayMessage(msg, onRxNDArrayMessage );
+        [name, data]= handleNDArrayMessage(msg);
      elseif strcmpi(messageType, 'POINT') == 1
-         [name, data] = handlePointMessage(msg, '' );
-     end        
-
+         [name, data] = handlePointMessage(msg);
+         %disp(name);
+         %disp(data);
+    end        
+    if ~isempty(name)
+        status = true;
+    end
 end
 
-function [name, message] = handleStringMessage(msg, onRxStringMessage)
+function [name, message] = handleStringMessage(msg)
     if (length(msg.body)<5)
         disp('Error: STRING message received with incomplete contents')
         msg.string='';
@@ -50,24 +52,23 @@ function [name, message] = handleStringMessage(msg, onRxStringMessage)
     msg.string=char(msg.body(5:4+strMsgLength));
     name = msg.deviceName;
     message = msg.string;
-    onRxStringMessage(msg.deviceName, msg.string);
 end
 
-function [name, trans] = handleTransformMessage(msg, onRxTransformMessage)
+function [name, trans] = handleTransformMessage(msg)
     transform = diag([1 1 1 1]);
     k=1;
     for i=1:4
         for j=1:3
-            transform(j,i) = convertFromUint8VectorToFloat32(msg.body(4*(k-1) +1:4*k));
+            transform(j,i) = swapbytes(typecast(uint8(msg.body(4*(k-1) +1:4*k)), 'single'));
+%                 convertFromUint8VectorToFloat32(msg.body(4*(k-1) +1:4*k));
             k = k+1;
         end
     end
     name = msg.deviceName;
     trans = transform;
-    onRxTransformMessage(msg.deviceName , transform);
 end
 
-function handleImageMessage(msg, onRxStringMessage)
+function handleImageMessage(msg)
     body = msg.body;
     i=1;
     
@@ -113,16 +114,15 @@ function handleImageMessage(msg, onRxStringMessage)
     end
     strMsgLength=convertFromUint8VectorToUint16(msg.body(3:4));
     msg.string=char(msg.body(5:4+strMsgLength));
-    onRxStringMessage(msg.deviceName, msg.string);
 end
 
-function [name, data] = handleNDArrayMessage(msg, onRxNDArrayMessage)
+function [name, data] = handleNDArrayMessage(msg)
     %YET NOT implmented, will be available soon
     name = '';
     data = [];
 end
 
-function [listName, points] = handlePointMessage(msg, onRxPointMessage)
+function [listName, points] = handlePointMessage(msg)
     sizeOfPoint = 136;
     numPoints = msg.bodySize/sizeOfPoint;
     listName = deblank(msg.deviceName);
@@ -147,65 +147,62 @@ function parsedMsg=ParseOpenIGTLinkMessageHeader(rawMsg)
     parsedMsg.dataTypeName=char(rawMsg(3:14));
     parsedMsg.deviceName=char(rawMsg(15:34));
     parsedMsg.timestamp=convertFromUint8VectorToInt64(rawMsg(35:42));
-    parsedMsg.bodySize=convertFromUint8VectorToInt64(rawMsg(43:50));
+    parsedMsg.bodySize=uint32(convertFromUint8VectorToInt64(rawMsg(43:50)));
     parsedMsg.bodyCrc=convertFromUint8VectorToInt64(rawMsg(51:58));
 end
 
-function msg=ReadOpenIGTLinkMessage()
+function extendedHeader=ParseOpenIGTLinkMessageExtendedHeader(body)
+    extendedHeader.ext_header_size = uint32(swapbytes(typecast(uint8(body(1:2)), 'uint16')));
+    extendedHeader.metadata_headr_size = uint32(swapbytes(typecast(uint8(body(3:4)), 'uint16')));
+    extendedHeader.metadata_size = swapbytes(typecast(uint8(body(5:8)), 'uint32'));
+    extendedHeader.reserved = swapbytes(typecast(uint8(body(9:12)), 'uint32'));
+
+%     extendedHeader.msd_id=convertFromUint8VectorToInt64(body(7:10));
+%     extendedHeader.reserved=convertFromUint8VectorToInt64(body(11:14));
+end
+
+function [status, msg]=ReadOpenIGTLinkMessage()
     global timeout;
+    status = false;
+    msg = [];
     openIGTLinkHeaderLength=58;
     headerData=ReadWithTimeout(openIGTLinkHeaderLength, timeout);
     if (length(headerData)==openIGTLinkHeaderLength)
         msg=ParseOpenIGTLinkMessageHeader(headerData);
-        msg.body=ReadWithTimeout(msg.bodySize, timeout);            
+        msg.body=ReadWithTimeout(msg.bodySize, timeout);
+        if (length(msg.body)==msg.bodySize) %if we did not get correct size of body return empty message
+            status = true;
+            if msg.versionNumber == 2 %this means its protocol verison 3
+                extendedHeader = ParseOpenIGTLinkMessageExtendedHeader(msg.body);
+                content_size = msg.bodySize - ( extendedHeader.ext_header_size + extendedHeader.metadata_headr_size + extendedHeader.metadata_size );
+                content_start = extendedHeader.ext_header_size+1;
+                content_end = content_start + content_size;
+                msg.body = msg.body(content_start: content_end);
+            end
+        end    
     else
-        error('ERROR: Timeout while waiting receiving OpenIGTLink message header')
+        return;
+        %error('ERROR: Timeout while waiting receiving OpenIGTLink message header')
     end
-end    
-      
-function data=ReadWithTimeout(requestedDataLength, timeoutSec)
-    import java.net.Socket
-    import java.io.*
-    import java.net.ServerSocket
-    
+end
+function data = ReadWithTimeout(requestedDataLength, timeoutSec) %currently does not use timeout will add that later
     global socket;
-    
-    % preallocate to improve performance
-    data=zeros(1,requestedDataLength,'uint8');
-    signedDataByte=int8(0);
-    bytesRead=0;
-    while(bytesRead<requestedDataLength)    
-        % Computing (requestedDataLength-bytesRead) is an int64 operation, which may not be available on Matlab R2009 and before
-        int64arithmeticsSupported=~isempty(find(strcmp(methods('int64'),'minus')));
-        if int64arithmeticsSupported
-            % Full 64-bit arithmetics
-            bytesToRead=min(socket.inputStream.available, requestedDataLength-bytesRead);
-        else
-            % Fall back to floating point arithmetics
-            bytesToRead=min(socket.inputStream.available, double(requestedDataLength)-double(bytesRead));
-        end  
-        if (bytesRead==0 && bytesToRead>0)
-            % starting to read message header
-            tstart=tic;
-        end
-        for i = bytesRead+1:bytesRead+bytesToRead
-            signedDataByte = DataInputStream(socket.inputStream).readByte;
-            if signedDataByte>=0
-                data(i) = signedDataByte;
-            else
-                data(i) = bitcmp(-signedDataByte,'uint8')+1;
-            end
-        end            
-        bytesRead=bytesRead+bytesToRead;
-        if (bytesRead>0 && bytesRead<requestedDataLength)
-            % check if the reading of the header has timed out yet
-            timeElapsedSec=toc(tstart);
-            if(timeElapsedSec>timeoutSec)
-                % timeout, it should not happen
-                % remove the unnecessary preallocated elements
-                data=data(1:bytesRead);
-                break
-            end
+    requestedDataLength = double(uint32(requestedDataLength));
+    data = [];
+    tstart=tic;
+    timeElapsedSec=toc(tstart);
+
+    while timeElapsedSec<timeoutSec && socket.BytesAvailable<requestedDataLength
+        timeElapsedSec=toc(tstart);
+    end
+    if socket.BytesAvailable<requestedDataLength
+        return ;
+    else
+        try
+            data = fread(socket, requestedDataLength, 'uint8');
+            data = data';
+        catch ex
+           error('Error reading data from socket %s\n', ex.message);
         end
     end
 end
@@ -214,14 +211,17 @@ end
 function result=convertFromUint8VectorToUint16(uint8Vector)
   result=int32(uint8Vector(1))*256+int32(uint8Vector(2));
 end
-
+function result=convertFromUint8VectorToUint32(uint8Vector)
+  result=int32(uint8Vector(1))*256+int32(uint8Vector(2));
+end
 function result=convertFromUint8VectorToFloat32(uint8Vector)
-    binVal = '';
-    for i=1:4
-        binVal = strcat(binVal, dec2bin(uint8Vector(i),8));
-    end
-    q = quantizer('float', [32 8]); % this is IEE 754
-    result = bin2num(q, binVal);
+  result = swapbytes(typecast(uint8(uint8Vector), 'single'));
+%   binVal = '';
+%     for i=1:4
+%         binVal = strcat(binVal, dec2bin(uint8Vector(i),8));
+%     end
+%     q = quantizer('float', [32 8]); % this is IEE 754
+%     result = bin2num(q, binVal);
 end 
 
 function result=convertFromUint8VectorToInt64(uint8Vector)

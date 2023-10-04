@@ -1,13 +1,16 @@
-function openIGTMessageSender = OpenIGTLinkMessageSender(sock)
+function openIGTMessageSender = OpenIGTLinkMessageSender(igtlConnection)
     global socket;
-    socket = sock;
-    openIGTMessageSender.WriteOpenIGTLinkStringMessage = @WriteOpenIGTLinkStringMessage;
-    openIGTMessageSender.Write1DFloatArrayMessage = @Write1DFloatArrayMessage;
+    socket = igtlConnection.socket;    
+
+    openIGTMessageSender.igtlSendStringMessage = @igtlSendStringMessage;
+    openIGTMessageSender.igtlSend1DFloatArrayMessage = @igtlSend1DFloatArrayMessage;
     openIGTMessageSender.igtlSendTransformMessage = @igtlSendTransformMessage;
     openIGTMessageSender.igtlSendImageMessage = @igtlSendImageMessage;
+    openIGTMessageSender.igtlSendPointMessage = @igtlSendPointMessage;
+    openIGTMessageSender.igtlSendTDATAMessage = @igtlSendTDATAMessage;
 end
 
-function result=WriteOpenIGTLinkStringMessage(deviceName, msgString)
+function result=igtlSendStringMessage(deviceName, msgString)
     msg.dataTypeName='STRING';
     msg.deviceName=deviceName;
     msg.timestamp=igtlTimestampNow();
@@ -16,7 +19,7 @@ function result=WriteOpenIGTLinkStringMessage(deviceName, msgString)
     result=WriteOpenIGTLinkMessage(msg);
 end
 
-function result=Write1DFloatArrayMessage(deviceName, data)
+function result=igtlSend1DFloatArrayMessage(deviceName, data)
     msg.dataTypeName='NDARRAY';
     msg.deviceName=deviceName;
     msg.timestamp=igtlTimestampNow();
@@ -26,6 +29,47 @@ function result=Write1DFloatArrayMessage(deviceName, data)
         msg.body=[ msg.body, convertFromFloat32ToUint8Vector(data(i))];
     end
     result=WriteOpenIGTLinkMessage(msg);
+end
+
+function result=igtlSendPointMessage(deviceName, data)
+    msg.dataTypeName='POINT';
+    msg.deviceName=deviceName;
+    msg.timestamp=igtlTimestampNow();
+    
+    if size(data,2)~=3
+        disp('DATA MUST HAVE SIZE Nx3');
+        result = -1;
+        return;
+    end
+
+    %sizeOfPoint = 136;
+    numPoints = size(data, 1);
+    
+    msg.body = [];
+    
+    group = 'Fiducal';
+    color = [1,1,0,0];
+    diamter = 1;
+    owner = '';
+    for i=1:numPoints
+        name = ['F_' , num2str(i)];
+        x = data(i,1);
+        y = data(i,2);
+        z = data(i,3);
+        point_data = [];
+        
+        point_data=[point_data, padString(name,64)];
+        point_data=[point_data, padString(group,32)];
+        
+        point_data=[point_data, uint8(color)];
+        point_data=[point_data, convertFromFloat32ToUint8Vector(x)];
+        point_data=[point_data, convertFromFloat32ToUint8Vector(y)];
+        point_data=[point_data, convertFromFloat32ToUint8Vector(z)];
+        point_data=[point_data, convertFromFloat32ToUint8Vector(diamter)];
+        point_data=[point_data, padString(owner,20)];
+        msg.body= [msg.body, point_data];
+    end
+    result=WriteOpenIGTLinkMessage(msg);  
 end
 
 function result=igtlSendTransformMessage(deviceName, transform)
@@ -42,6 +86,31 @@ function result=igtlSendTransformMessage(deviceName, transform)
 %             msg.body=[ msg.body, convertFromFloat32ToUint8Vector(transform(j,i))];
 %         end
 %     end
+    result=WriteOpenIGTLinkMessage(msg);
+end
+
+function result=igtlSendTDATAMessage(deviceName, tData)
+    msg.dataTypeName='TDATA';
+    msg.deviceName=deviceName;
+    msg.timestamp=igtlTimestampNow();
+    
+    if size(tData,1)~=4 && size(tData,2)~=4
+        disp('DATA MUST HAVE SIZE 4x4xN');
+        result = -1;
+        return;
+    end
+
+    % version number
+    % note that it is an unsigned short value, but small positive signed and unsigned numbers are represented the same way, so we can use writeShort
+    msg.body = [];
+    for i=1:size(tData, 3)
+        t_data = [];
+        t_data = [t_data, padString([deviceName , num2str(i)],20)];
+        t_data = [t_data, uint8(2)];
+        t_data = [t_data, uint8(0)];
+        t_data = [t_data, typecast(swapbytes(single(reshape(tData(1:3,:,i),1,[]))), 'uint8')];
+        msg.body = [msg.body, t_data];
+    end
     result=WriteOpenIGTLinkMessage(msg);
 end
 
@@ -83,9 +152,6 @@ end
 % Returns 1 if successful, 0 if failed
 function result=WriteOpenIGTLinkMessage(msg)
     global socket;
-    import java.net.Socket
-    import java.io.*
-    import java.net.ServerSocket
     % Add constant fields values
     msg.versionNumber=1;
     msg.bodySize=length(msg.body);
@@ -103,15 +169,10 @@ function result=WriteOpenIGTLinkMessage(msg)
     data=[data, uint8(msg.body)];    
     result=1;
     try
-        %disp(['Length Of Data being writeen to socket=', num2str(length(data))]);
-        DataOutputStream(socket.outputStream).write(uint8(data),0,length(data));
-        DataOutputStream(socket.outputStream).flush;
-    catch ME
-        disp(ME.message)
-        result=0;
-    end
-    try
-        DataOutputStream(socket.outputStream).flush;
+        disp(['Length Of Data being writeen to socket=', num2str(length(data))]);
+        %write data considering the output buffersize
+        
+        fwrite(socket, uint8(data));
     catch ME
         disp(ME.message)
         result=0;
