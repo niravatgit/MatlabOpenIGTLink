@@ -3,7 +3,7 @@ function receiver = OpenIGTLinkMessageReceiver(igtlConnection)
     global socket;
     socket = igtlConnection.socket;    
     global timeout;
-    timeout = 0.01;
+    timeout = 0.1;
    
     receiver.readMessage = @readMessage;
 end
@@ -147,7 +147,7 @@ function parsedMsg=ParseOpenIGTLinkMessageHeader(rawMsg)
     parsedMsg.dataTypeName=char(rawMsg(3:14));
     parsedMsg.deviceName=char(rawMsg(15:34));
     parsedMsg.timestamp=convertFromUint8VectorToInt64(rawMsg(35:42));
-    parsedMsg.bodySize=uint32(convertFromUint8VectorToInt64(rawMsg(43:50)));
+    parsedMsg.bodySize=swapbytes(typecast(uint8(rawMsg(43:50)), 'uint64')); %uint32(convertFromUint8VectorToInt64(rawMsg(43:50)));
     parsedMsg.bodyCrc=convertFromUint8VectorToInt64(rawMsg(51:58));
 end
 
@@ -170,11 +170,12 @@ function [status, msg]=ReadOpenIGTLinkMessage()
     if (length(headerData)==openIGTLinkHeaderLength)
         msg=ParseOpenIGTLinkMessageHeader(headerData);
         msg.body=ReadWithTimeout(msg.bodySize, timeout);
+        disp(['msg.bodySize = ', num2str(msg.bodySize)]);
         if (length(msg.body)==msg.bodySize) %if we did not get correct size of body return empty message
             status = true;
             if msg.versionNumber == 2 %this means its protocol verison 3
                 extendedHeader = ParseOpenIGTLinkMessageExtendedHeader(msg.body);
-                content_size = msg.bodySize - ( extendedHeader.ext_header_size + extendedHeader.metadata_headr_size + extendedHeader.metadata_size );
+                content_size = uint32(msg.bodySize) - ( extendedHeader.ext_header_size + extendedHeader.metadata_headr_size + extendedHeader.metadata_size );
                 content_start = extendedHeader.ext_header_size+1;
                 content_end = content_start + content_size;
                 msg.body = msg.body(content_start: content_end);
@@ -196,9 +197,15 @@ function data = ReadWithTimeout(requestedDataLength, timeoutSec) %currently does
         timeElapsedSec=toc(tstart);
     end
     if socket.BytesAvailable<requestedDataLength
+        disp('not enough data');
+        disp(socket.BytesAvailable);
+        disp(requestedDataLength);
         return ;
     else
         try
+            if requestedDataLength==0
+                return 
+            end
             data = fread(socket, requestedDataLength, 'uint8');
             data = data';
         catch ex

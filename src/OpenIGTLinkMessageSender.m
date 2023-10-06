@@ -144,7 +144,7 @@ tic
     %loop used to take about 2 seconds while this statement takes 3
     %miliseconds
     msg.body=[ msg.body,  typecast((int16(reshape(imageData',1,[]))), 'uint8')];
-    disp(['Size of the Image Message Body=', num2str(length(uint8(msg.body)))]);
+%     disp(['Size of the Image Message Body=', num2str(length(uint8(msg.body)))]);
     result=WriteOpenIGTLinkMessage(msg);
 toc
 end
@@ -169,7 +169,7 @@ function result=WriteOpenIGTLinkMessage(msg)
     data=[data, uint8(msg.body)];    
     result=1;
     try
-        disp(['Length Of Data being writeen to socket=', num2str(length(data))]);
+%         disp(['Length Of Data being writeen to socket=', num2str(length(data))]);
         %write data considering the output buffersize
         
         fwrite(socket, uint8(data));
